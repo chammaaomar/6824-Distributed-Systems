@@ -1,10 +1,13 @@
 package mr
 
 import (
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"io/ioutil"
 	"log"
 	"net/rpc"
+	"os"
 )
 
 //
@@ -30,11 +33,55 @@ func ihash(key string) int {
 // the Master. If the Master doesn't respond within
 // 10 seconds, it exits. If the Master responds
 // with nothing, it sleeps.
-func Worker(mapf func(string, string) []KeyValue,
-	reducef func(string, []string) string) {
-	var file string
-	call("Master.RequestTask", 0, &file)
-	fmt.Println("I'm working on the task &s", file)
+func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
+	taskInfo := TaskResponse{}
+	taskArgs := TaskArgs{}
+	for {
+		callSuccess := call("Master.RequestTask", taskArgs, &taskInfo)
+		if callSuccess {
+			if taskInfo.TaskType == Map {
+				handleMap(mapf, taskInfo.Filename, taskInfo.NReduce, taskInfo.TaskID)
+			} else {
+				// Reduce
+			}
+		}
+		os.Exit(1)
+	}
+
+}
+
+func handleMap(mapf func(string, string) []KeyValue, file string, nreduce int, taskID int) {
+	contents, err := ioutil.ReadFile(file)
+	if err != nil {
+		fmt.Printf("worker reading: %v", err)
+		return
+	}
+	// intermediate filename "mr-X-R"
+	var iFilename string
+	intermediateFiles := make([]*os.File, nreduce)
+	enc := make([]*json.Encoder, nreduce)
+	kvsEmitted := mapf(file, string(contents))
+
+	for i := range intermediateFiles {
+		iFilename = fmt.Sprintf("mr-%d-%d", taskID, i)
+		intermediateFiles[i], err = os.Create(iFilename)
+		defer intermediateFiles[i].Close()
+		if err != nil {
+			fmt.Printf("worker creating intermediate: %v", err)
+			return
+		}
+		enc[i] = json.NewEncoder(intermediateFiles[i])
+	}
+
+	for _, kv := range kvsEmitted {
+		reducerID := ihash(kv.Key) % nreduce
+		err := enc[reducerID].Encode(&kv)
+		if err != nil {
+			fmt.Printf("worker writing intermediate: %v", err)
+			return
+		}
+	}
+
 }
 
 //

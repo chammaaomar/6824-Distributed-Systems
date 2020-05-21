@@ -1,7 +1,6 @@
 package mr
 
 import (
-	"errors"
 	"log"
 	"net"
 	"net/http"
@@ -12,35 +11,53 @@ import (
 
 type Master struct {
 	// the Master handles RPCs concurrenctly
-	AssignedTasks   map[string]bool
-	mux             sync.Mutex
-	NReducePending  int
-	NMappersPending int
+	AssignedMaps   map[string]bool
+	AssignedReduce map[string]bool
+	mux            sync.Mutex
+	MapsRemain     int
+	MapID          int
+	ReduceID       int
+	ReduceRemain   int
 }
 
-// Your code here -- RPC handlers for the worker to call.
-
-// RequestTask is an RPC via which workers can ask for Map jobs
-// (taskType == 0) or Reduce jobs (taskType == 1) and receive
-// a string pointer holding the filename to work on
-func (m *Master) RequestTask(taskType TaskType, reply *string) error {
-	if taskType == Map {
-		m.mux.Lock()
-		defer m.mux.Unlock()
-		for filename, assigned := range m.AssignedTasks {
+// RequestTask is an RPC via which workers can ask for jobs
+// it send back either a Map job, or a Reduce job, or tells the
+// worker to wait if all jobs are currently assigned but not
+// completed. The worker waits in case one of the workers fails.
+func (m *Master) RequestTask(TaskArgs, reply *TaskResponse) error {
+	if m.MapsRemain > 0 {
+		// try to assign a map task that isn't assigned to another
+		// worker
+		for file, assigned := range m.AssignedMaps {
 			if !assigned {
-				*reply = filename
-				m.AssignedTasks[filename] = true
+				reply.TaskID = m.MapID
+				reply.TaskType = Map
+				reply.Filename = file
+				// since no reduce jobs execute before all
+				// map jobs are done, this is just the number
+				// of reduce jobs passed by the user
+				reply.NReduce = m.ReduceRemain
+				m.MapID++
 				return nil
 			}
 		}
+		// all map tasks currently assigned, but not necessarily completed
+		return ErrWait
 	}
-	if taskType == Reduce {
-		// not implemented yet
-		return errors.New("Reduce not yet implemented")
+	// no map tasks remaining, ready to reduce
+	if m.ReduceRemain > 0 {
+		for file, assigned := range m.AssignedReduce {
+			if !assigned {
+				reply.TaskID = m.ReduceID
+				reply.TaskType = Reduce
+				reply.Filename = file
+				m.ReduceID++
+				return nil
+			}
+		}
+		return ErrWait
 	}
-
-	return errors.New("Allowed taskType values are 0 for Map and 1 for Reduce")
+	return ErrDone
 }
 
 //
@@ -78,15 +95,15 @@ func (m *Master) Done() bool {
 //
 func MakeMaster(files []string, nReduce int) *Master {
 	assignedTasks := make(map[string]bool)
-
 	// currently no tasks are assigned to workers
 	for _, f := range files {
 		assignedTasks[f] = false
 	}
 	m := Master{
-		AssignedTasks:   assignedTasks,
-		NReducePending:  nReduce,
-		NMappersPending: len(files),
+		AssignedMaps:   assignedTasks,
+		AssignedReduce: map[string]bool{},
+		ReduceRemain:   nReduce,
+		MapsRemain:     len(files),
 	}
 	// master does not have to start the workers
 	m.server()

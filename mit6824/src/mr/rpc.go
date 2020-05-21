@@ -7,26 +7,41 @@ package mr
 //
 
 import (
+	"errors"
 	"os"
 	"strconv"
 )
 
-// TaskType is the type of task requested by a worker
-// to the master via RPC. Either Map == 0 or Reduce == 1
+// TaskType indicates to workers whether to perform
+// a map job or a reduce job
 type TaskType int
 
-// TaskTypes that can be requested over RPC to Master
+// TaskType == 0 for a Map job and == 1 for a Reduce job
 const (
 	Map TaskType = iota
 	Reduce
 )
 
-//
-// example to show how to declare the arguments
-// and reply for an RPC.
-//
+// ErrWait is error returned by Master RPC if all jobs currently assigned
+// to other workers but not necessarily completed.
+var ErrWait = errors.New("all jobs currently assigned. Wait")
 
-// Add your RPC definitions here.
+// ErrDone is error returned by Master RPC if all tasks are completed
+var ErrDone = errors.New("all tasks done")
+
+// TaskResponse is the RPC response sent by the master
+// to workers upon their request for a task to work on
+type TaskResponse struct {
+	TaskType
+	Filename string
+	NReduce  int
+	TaskID   int
+}
+
+// TaskArgs are the args sent by a worker with an RPC
+// request to the master when asking for a task to work on.
+// Currently no info is sent.
+type TaskArgs struct{}
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the master.
