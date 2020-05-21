@@ -41,11 +41,15 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 		if callSuccess {
 			if taskInfo.TaskType == Map {
 				handleMap(mapf, taskInfo.Filename, taskInfo.NReduce, taskInfo.TaskID)
+				// task successfully completed, let the master know
+				done := DoneArgs{taskInfo.TaskType, taskInfo.Filename}
+				doneRes := DoneResponse{}
+				call("Master.NotifyDone", done, &doneRes)
 			} else {
 				// Reduce
+				os.Exit(1)
 			}
 		}
-		os.Exit(1)
 	}
 
 }

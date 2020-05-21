@@ -7,13 +7,23 @@ import (
 	"net/rpc"
 	"os"
 	"sync"
+	"time"
+)
+
+type jobStatus int
+
+const (
+	free jobStatus = iota
+	inProgress
+	completed
 )
 
 type Master struct {
 	// the Master handles RPCs concurrenctly
-	AssignedMaps   map[string]bool
-	AssignedReduce map[string]bool
-	mux            sync.Mutex
+	AssignedMaps   map[string]jobStatus
+	AssignedReduce map[string]jobStatus
+	mapMux         sync.Mutex
+	countMux       sync.Mutex
 	MapsRemain     int
 	MapID          int
 	ReduceID       int
@@ -25,11 +35,19 @@ type Master struct {
 // worker to wait if all jobs are currently assigned but not
 // completed. The worker waits in case one of the workers fails.
 func (m *Master) RequestTask(TaskArgs, reply *TaskResponse) error {
+
+	// reduce jobs can only run AFTER all map jobs have finished
+	// once reduce jobs have start, there are no map jobs remaining
+	// so we can safely lock everything here, because they cannot
+	// be used simultaneously
+	m.mapMux.Lock()
+	defer m.mapMux.Unlock()
 	if m.MapsRemain > 0 {
 		// try to assign a map task that isn't assigned to another
 		// worker
-		for file, assigned := range m.AssignedMaps {
-			if !assigned {
+		for file, status := range m.AssignedMaps {
+			if status == free {
+				m.AssignedMaps[file] = inProgress
 				reply.TaskID = m.MapID
 				reply.TaskType = Map
 				reply.Filename = file
@@ -38,6 +56,17 @@ func (m *Master) RequestTask(TaskArgs, reply *TaskResponse) error {
 				// of reduce jobs passed by the user
 				reply.NReduce = m.ReduceRemain
 				m.MapID++
+				go func() {
+					time.Sleep(10 * time.Second)
+					if m.AssignedMaps[file] == completed {
+						return
+					}
+					// assume worker is dead; re-assign process
+					m.mapMux.Lock()
+					defer m.mapMux.Unlock()
+					m.AssignedMaps[file] = free
+					return
+				}()
 				return nil
 			}
 		}
@@ -46,18 +75,45 @@ func (m *Master) RequestTask(TaskArgs, reply *TaskResponse) error {
 	}
 	// no map tasks remaining, ready to reduce
 	if m.ReduceRemain > 0 {
-		for file, assigned := range m.AssignedReduce {
-			if !assigned {
+		for file, status := range m.AssignedReduce {
+			if status == free {
+				m.AssignedReduce[file] = inProgress
 				reply.TaskID = m.ReduceID
 				reply.TaskType = Reduce
 				reply.Filename = file
 				m.ReduceID++
+				go func() {
+					time.Sleep(10 * time.Second)
+					if m.AssignedReduce[file] == completed {
+						return
+					}
+					// assume worker is dead; re-assign process
+					m.mapMux.Lock()
+					defer m.mapMux.Unlock()
+					m.AssignedReduce[file] = free
+					return
+				}()
 				return nil
 			}
 		}
 		return ErrWait
 	}
 	return ErrDone
+}
+
+func (m *Master) NotifyDone(args DoneArgs, reply *DoneResponse) error {
+	m.countMux.Lock()
+	m.mapMux.Lock()
+	defer m.mapMux.Unlock()
+	defer m.countMux.Unlock()
+	if args.TaskType == Map {
+		m.MapsRemain--
+		m.AssignedMaps[args.Filename] = completed
+		return nil
+	}
+	m.ReduceRemain--
+	m.AssignedReduce[args.Filename] = completed
+	return nil
 }
 
 //
@@ -94,14 +150,14 @@ func (m *Master) Done() bool {
 // nReduce is the number of reduce tasks to use.
 //
 func MakeMaster(files []string, nReduce int) *Master {
-	assignedTasks := make(map[string]bool)
+	assignedTasks := make(map[string]jobStatus)
 	// currently no tasks are assigned to workers
 	for _, f := range files {
-		assignedTasks[f] = false
+		assignedTasks[f] = free
 	}
 	m := Master{
 		AssignedMaps:   assignedTasks,
-		AssignedReduce: map[string]bool{},
+		AssignedReduce: map[string]jobStatus{},
 		ReduceRemain:   nReduce,
 		MapsRemain:     len(files),
 	}

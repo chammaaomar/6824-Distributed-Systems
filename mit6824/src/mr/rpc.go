@@ -43,6 +43,17 @@ type TaskResponse struct {
 // Currently no info is sent.
 type TaskArgs struct{}
 
+// DoneArgs is RPC argument sent by worker to master to notify they are done
+// with the task.
+type DoneArgs struct {
+	TaskType
+	Filename string
+}
+
+// DoneResponse is the RPC response sent by the master to the worker
+// upon their notification of a task successfully done
+type DoneResponse struct{}
+
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the master.
 // Can't use the current directory since
