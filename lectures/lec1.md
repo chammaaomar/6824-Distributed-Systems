@@ -1,3 +1,5 @@
+# Introduction and MapReduce
+
 A **distributed system** is a collection of computers working cooperatively to
 complete a certain task.
 
@@ -13,7 +15,7 @@ Challenges confronted in distributed system design:
 - Single node systems are either working or failing; they have definite failure
   patterns. Distributed systems have unusual failure patterns where they can be
   in a partial state of functionality, either due to some nodes failing or network
-  partitioning _etc_.
+  partitioning ... _etc_.
 - Concurrency and clock synchrnoization.
 - Often distributed systems are designed with aim of maximizing performance, but
   this can be tricky due to overhead, network communication _etc_.
@@ -29,7 +31,8 @@ One of our main goals in the course is to discover abstractions that simplify
 the interface to these compute and storage infrastructures, to make it easy
 to build applications on top of them. These abstractions would serve to hide
 the distributed nature of these systems. For example, a file-system abstraction
-over a distributed storage system that looks just like the single-node filesystem.
+over a distributed storage system that looks just like the single-node filesystem,
+_e.g._ Hadoop.
 
 What implementation techniques will be encountered?
 
@@ -39,7 +42,7 @@ What implementation techniques will be encountered?
 - Threads and the ensuing concurrency control, _e.g._ locks, to structure concurrent
   logic and organize it from a programmer's point of view.
 
-Big ideas that will concern us:
+## Big ideas in course
 
 - **Performance and scalability**: By scalability we mean linear speedup according to some
   metric, like latency or throughput. This means if we double our computational resource
@@ -50,6 +53,8 @@ Big ideas that will concern us:
   In the example shown below, more webservers can be added, which will increase the
   performance up to a certain point: They are all talking to the same database, and
   this database will become the bottleneck.
+
+  ![An example of a system with sub-linear scaling](img/non-scalable.jpg)
 
 - **Fault tolerance**: A single node can stay up for years without crashing, however, with
   a distributed system of about a thousand nodes, even if each one crashes only about once
@@ -90,11 +95,11 @@ anything about distributed systems. The MapReduce framework would take care of e
 ### Highlights of the MapReduce discussion
 
 - There are two types of processes: Master and worker. The master periodically checks to see
-  if workers are still alive, sends the user-defined Map and Reduce functions to workers, handles
-  worker failures, and so on.
-- There are two types of workers: Map workers and Reduce workers. The user input, generically
+  if workers are still alive, sends the user-defined map and reduce functions to workers, handles
+  worker failures, assigns file chunks for workers to handle and so on.
+- There are two types of workers: Map workers and reduce workers. The user input, generically
   a large dataset, is broken up into chunks 64 MBs in size, and each chunk is sent to a Map worker,
-  so for a TeraByte file, there would be approximately 16,000 map workers.
+  so for a file 1 TB in size, there would be approximately 16,000 map workers.
 - The bottleneck described in the Google MapReduce paper is network throughput. An optimization
   they thus made is to put the Google File-System (GFS) and the MapReduce framework on the same
   set of servers. This is great because any data already on the GFS would be broken up into 64 MB
@@ -107,7 +112,7 @@ anything about distributed systems. The MapReduce framework would take care of e
   could be spread out all over the GFS. These files are sorted in order to group all the values
   for a given key together, then the user-defined reduce function is invoked _at least once_ per
   key. There are as many output files produced as there are reduce workers.
-- The Map and Reduce functions are pure, mathematical functions that _only_ act on their
+- The map and reduce functions are pure, mathematical functions that _only_ act on their
   inputs to produce outputs. They don't produce any side-effects. This ensures safe retries
   in case of failure (idempotence), because they most likely will be run more than once.
 - MapReduce is very imperative, in the sense if you have a complex task you would run
@@ -118,3 +123,7 @@ anything about distributed systems. The MapReduce framework would take care of e
 - MapReduce is batch-based: The mappers have to be done before the reducers can start.
   Additionally, there has to be a notion of finite data. There are more modern streaming systems
   like Spark that address this.
+
+## Readings:
+
+- [Google MapReduce paper](../readings/mapreduce.pdf)
