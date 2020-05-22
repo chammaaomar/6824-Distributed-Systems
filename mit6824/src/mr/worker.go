@@ -8,6 +8,9 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"path/filepath"
+	"strings"
+	"time"
 )
 
 //
@@ -47,9 +50,15 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 				call("Master.NotifyDone", done, &doneRes)
 			} else {
 				// Reduce
-				os.Exit(1)
+				handleReduce(reducef, taskInfo.Filename)
+				// task successfully completed, let the master know
+				done := DoneArgs{taskInfo.TaskType, taskInfo.Filename}
+				doneRes := DoneResponse{}
+				call("Master.NotifyDone", done, &doneRes)
 			}
 		}
+		// no tasks available, wait for a sec before asking
+		time.Sleep(time.Second)
 	}
 
 }
@@ -84,6 +93,55 @@ func handleMap(mapf func(string, string) []KeyValue, file string, nreduce int, t
 			fmt.Printf("worker writing intermediate: %v", err)
 			return
 		}
+	}
+
+}
+
+// globPattern is a UNIX-style glob pattern "mr-[0-9]*-JobID"
+// in a realistic MapReduce, such UNIX-style utilities are available
+// because we would be operating in something like HDFS or GFS that
+// provides a Linux abstraction over a distributed filesystem
+func handleReduce(reducef func(string, []string) string, globPattern string) {
+	mapOutputs, err := filepath.Glob(globPattern)
+	fmt.Println(globPattern)
+	lastDash := strings.LastIndex(globPattern, "-")
+	reducerID := globPattern[lastDash+1:]
+	if err != nil {
+		fmt.Printf("reducer globbing intermediate files: %v", err)
+		return
+	}
+	combinedMap := make(map[string][]string)
+	for _, mapOutput := range mapOutputs {
+		mapFile, err := os.Open(mapOutput)
+		defer mapFile.Close()
+		if err != nil {
+			fmt.Printf("reading intermediate: %v", err)
+			return
+		}
+		decoder := json.NewDecoder(mapFile)
+		kv := KeyValue{}
+		for decoder.More() {
+			// more objects to parse
+			err := decoder.Decode(&kv)
+			if err != nil {
+				fmt.Printf("decoding: %v", err)
+				return
+			}
+			combinedMap[kv.Key] = append(combinedMap[kv.Key], kv.Value)
+		}
+	}
+
+	outName := fmt.Sprintf("mr-out-%s", reducerID)
+	outFile, err := os.Create(outName)
+	defer outFile.Close()
+
+	if err != nil {
+		fmt.Printf("creating output file: %v", err)
+		return
+	}
+
+	for key, values := range combinedMap {
+		fmt.Fprintf(outFile, "%s %s\n", key, reducef(key, values))
 	}
 
 }

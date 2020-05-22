@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -151,16 +152,22 @@ func (m *Master) Done() bool {
 //
 func MakeMaster(files []string, nReduce int) *Master {
 	assignedTasks := make(map[string]jobStatus)
+	assignedReduce := make(map[string]jobStatus)
 	// currently no tasks are assigned to workers
+	// initialize
 	for _, f := range files {
 		assignedTasks[f] = free
 	}
+	for i := 0; i < nReduce; i++ {
+		assignedReduce[fmt.Sprintf("mr-[0-9]*-%d", i)] = free
+	}
 	m := Master{
 		AssignedMaps:   assignedTasks,
-		AssignedReduce: map[string]jobStatus{},
+		AssignedReduce: assignedReduce,
 		ReduceRemain:   nReduce,
 		MapsRemain:     len(files),
 	}
+
 	// master does not have to start the workers
 	m.server()
 	return &m
