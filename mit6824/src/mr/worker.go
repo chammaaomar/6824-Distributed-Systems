@@ -40,8 +40,8 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 	taskInfo := TaskResponse{}
 	taskArgs := TaskArgs{}
 	for {
-		callSuccess := call("Master.RequestTask", taskArgs, &taskInfo)
-		if callSuccess {
+		callError := call("Master.RequestTask", taskArgs, &taskInfo)
+		if callError == nil {
 			if taskInfo.TaskType == Map {
 				handleMap(mapf, taskInfo.Filename, taskInfo.NReduce, taskInfo.TaskID)
 				// task successfully completed, let the master know
@@ -56,9 +56,13 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 				doneRes := DoneResponse{}
 				call("Master.NotifyDone", done, &doneRes)
 			}
+		} else if callError == ErrWait {
+			// no tasks available, wait for a sec before asking
+			time.Sleep(time.Second)
+		} else {
+			fmt.Println("worker: Master not responding. Exiting...")
+			os.Exit(0)
 		}
-		// no tasks available, wait for a sec before asking
-		time.Sleep(time.Second)
 	}
 
 }
@@ -103,7 +107,6 @@ func handleMap(mapf func(string, string) []KeyValue, file string, nreduce int, t
 // provides a Linux abstraction over a distributed filesystem
 func handleReduce(reducef func(string, []string) string, globPattern string) {
 	mapOutputs, err := filepath.Glob(globPattern)
-	fmt.Println(globPattern)
 	lastDash := strings.LastIndex(globPattern, "-")
 	reducerID := globPattern[lastDash+1:]
 	if err != nil {
@@ -151,7 +154,7 @@ func handleReduce(reducef func(string, []string) string, globPattern string) {
 // usually returns true.
 // returns false if something goes wrong.
 //
-func call(rpcname string, args interface{}, reply interface{}) bool {
+func call(rpcname string, args interface{}, reply interface{}) error {
 	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
 	sockname := masterSock()
 	c, err := rpc.DialHTTP("unix", sockname)
@@ -160,11 +163,5 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 	}
 	defer c.Close()
 
-	err = c.Call(rpcname, args, reply)
-	if err == nil {
-		return true
-	}
-
-	fmt.Println(err)
-	return false
+	return c.Call(rpcname, args, reply)
 }

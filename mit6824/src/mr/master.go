@@ -114,6 +114,13 @@ func (m *Master) NotifyDone(args DoneArgs, reply *DoneResponse) error {
 	}
 	m.ReduceRemain--
 	m.AssignedReduce[args.Filename] = completed
+	if m.ReduceRemain == 0 {
+		go func() {
+			fmt.Println("master: All tasks completed. Exiting...")
+			time.Sleep(time.Second)
+			os.Exit(0)
+		}()
+	}
 	return nil
 }
 

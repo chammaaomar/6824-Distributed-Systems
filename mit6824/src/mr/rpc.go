@@ -24,10 +24,10 @@ const (
 
 // ErrWait is error returned by Master RPC if all jobs currently assigned
 // to other workers but not necessarily completed.
-var ErrWait = errors.New("all jobs currently assigned. Wait")
+var ErrWait = errors.New("all jobs currently assigned. Wait\n")
 
 // ErrDone is error returned by Master RPC if all tasks are completed
-var ErrDone = errors.New("all tasks done")
+var ErrDone = errors.New("all tasks done\n")
 
 // TaskResponse is the RPC response sent by the master
 // to workers upon their request for a task to work on
