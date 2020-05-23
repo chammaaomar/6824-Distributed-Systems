@@ -10,21 +10,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
-//
-// Map functions return a slice of KeyValue.
-//
+// KeyValue is used to decode key-value pairs
+// emitted by Map
 type KeyValue struct {
 	Key   string
 	Value string
 }
 
-//
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
-//
 func ihash(key string) int {
 	h := fnv.New32a()
 	h.Write([]byte(key))
@@ -56,10 +52,9 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 				doneRes := DoneResponse{}
 				call("Master.NotifyDone", done, &doneRes)
 			}
-		} else if callError == ErrWait {
+		} else if callError != ErrWait {
 			// no tasks available, wait for a sec before asking
-			time.Sleep(time.Second)
-		} else {
+			fmt.Printf("worker calling master: %v\n", callError)
 			fmt.Println("worker: Master not responding. Exiting...")
 			os.Exit(0)
 		}
@@ -80,7 +75,7 @@ func handleMap(mapf func(string, string) []KeyValue, file string, nreduce int, t
 	kvsEmitted := mapf(file, string(contents))
 
 	for i := range intermediateFiles {
-		iFilename = fmt.Sprintf("mr-%d-%d", taskID, i)
+		iFilename = fmt.Sprintf("mr-worker-%d-%d", taskID, i)
 		intermediateFiles[i], err = os.Create(iFilename)
 		defer intermediateFiles[i].Close()
 		if err != nil {
@@ -134,8 +129,13 @@ func handleReduce(reducef func(string, []string) string, globPattern string) {
 		}
 	}
 
-	outName := fmt.Sprintf("mr-out-%s", reducerID)
-	outFile, err := os.Create(outName)
+	outName := fmt.Sprintf("mr-out-%s-", reducerID)
+	currentDir, dirErr := os.Getwd()
+	if dirErr != nil {
+		fmt.Printf("worker getting current dir: %v\nb", dirErr)
+		return
+	}
+	outFile, err := ioutil.TempFile(currentDir, outName)
 	defer outFile.Close()
 
 	if err != nil {
@@ -146,7 +146,9 @@ func handleReduce(reducef func(string, []string) string, globPattern string) {
 	for key, values := range combinedMap {
 		fmt.Fprintf(outFile, "%s %s\n", key, reducef(key, values))
 	}
-
+	tempName := outFile.Name()
+	permName := tempName[:strings.LastIndex(tempName, "-")]
+	os.Rename(tempName, permName)
 }
 
 //

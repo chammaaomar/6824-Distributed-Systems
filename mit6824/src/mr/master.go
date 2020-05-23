@@ -66,8 +66,8 @@ func (m *Master) RequestTask(TaskArgs, reply *TaskResponse) error {
 					m.mapMux.Lock()
 					defer m.mapMux.Unlock()
 					m.AssignedMaps[file] = free
-					return
 				}()
+				// assigned task to worker
 				return nil
 			}
 		}
@@ -94,6 +94,7 @@ func (m *Master) RequestTask(TaskArgs, reply *TaskResponse) error {
 					m.AssignedReduce[file] = free
 					return
 				}()
+				// assigned task to worker
 				return nil
 			}
 		}
@@ -102,6 +103,10 @@ func (m *Master) RequestTask(TaskArgs, reply *TaskResponse) error {
 	return ErrDone
 }
 
+// NotifyDone is a method to be called by workers via RPC to let
+// the master know they finished their task. If not called within
+// ten seconds of starting the job, the master will assume the worker
+// is dead.
 func (m *Master) NotifyDone(args DoneArgs, reply *DoneResponse) error {
 	m.countMux.Lock()
 	m.mapMux.Lock()
@@ -121,6 +126,7 @@ func (m *Master) NotifyDone(args DoneArgs, reply *DoneResponse) error {
 			os.Exit(0)
 		}()
 	}
+
 	return nil
 }
 
@@ -166,7 +172,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 		assignedTasks[f] = free
 	}
 	for i := 0; i < nReduce; i++ {
-		assignedReduce[fmt.Sprintf("mr-[0-9]*-%d", i)] = free
+		assignedReduce[fmt.Sprintf("mr-worker-[0-9]*-%d", i)] = free
 	}
 	m := Master{
 		AssignedMaps:   assignedTasks,

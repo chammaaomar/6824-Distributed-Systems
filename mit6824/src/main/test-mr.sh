@@ -1,13 +1,13 @@
 #!/bin/sh
 
-#
-# basic map-reduce test
-#
+# #
+# # basic map-reduce test
+# #
 
-RACE=
+# RACE=
 
-# uncomment this to run the tests with the Go race detector.
-#RACE=-race
+# # uncomment this to run the tests with the Go race detector.
+# #RACE=-race
 
 # run the test in a fresh sub-directory.
 rm -rf mr-tmp
@@ -84,7 +84,10 @@ sleep 1
 
 # start multiple workers
 timeout -k 2s 180s ../mrworker ../../mrapps/indexer.so &
-timeout -k 2s 180s ../mrworker ../../mrapps/indexer.so
+timeout -k 2s 180s ../mrworker ../../mrapps/indexer.so &
+
+# wait for remaining workers and master to exit.
+wait ; wait ; wait
 
 sort mr-out* | grep . > mr-indexer-all
 if cmp mr-indexer-all mr-correct-indexer.txt
@@ -107,7 +110,10 @@ timeout -k 2s 180s ../mrmaster ../pg*txt &
 sleep 1
 
 timeout -k 2s 180s ../mrworker ../../mrapps/mtiming.so &
-timeout -k 2s 180s ../mrworker ../../mrapps/mtiming.so
+timeout -k 2s 180s ../mrworker ../../mrapps/mtiming.so &
+
+# wait for remaining workers and master to exit.
+wait ; wait ; wait
 
 NT=`cat mr-out* | grep '^times-' | wc -l | sed 's/ //g'`
 if [ "$NT" != "2" ]
@@ -137,7 +143,10 @@ timeout -k 2s 180s ../mrmaster ../pg*txt &
 sleep 1
 
 timeout -k 2s 180s ../mrworker ../../mrapps/rtiming.so &
-timeout -k 2s 180s ../mrworker ../../mrapps/rtiming.so
+timeout -k 2s 180s ../mrworker ../../mrapps/rtiming.so &
+
+# wait for remaining workers and master to exit.
+wait ; wait ; wait
 
 NT=`cat mr-out* | grep '^[a-z] 2' | wc -l | sed 's/ //g'`
 if [ "$NT" -lt "2" ]
@@ -155,7 +164,7 @@ wait ; wait
 # generate the correct output
 ../mrsequential ../../mrapps/nocrash.so ../pg*txt || exit 1
 sort mr-out-0 > mr-correct-crash.txt
-rm -f mr-out*
+rm -f mr-out* mr-worker*
 
 echo '***' Starting crash test.
 
