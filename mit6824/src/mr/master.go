@@ -19,8 +19,9 @@ const (
 	completed
 )
 
+// Master distributes tasks to workers and keeps tracks
+// of completed tasks and dead workers
 type Master struct {
-	// the Master handles RPCs concurrenctly
 	AssignedMaps   map[string]jobStatus
 	AssignedReduce map[string]jobStatus
 	mapMux         sync.Mutex
@@ -31,14 +32,67 @@ type Master struct {
 	ReduceRemain   int
 }
 
-// RequestTask is an RPC via which workers can ask for jobs
-// it send back either a Map job, or a Reduce job, or tells the
+// assignMap assigns a worker to work on a map task
+// where the chunk name is given by file
+func (m *Master) assignMap(file string, reply *TaskResponse) {
+	m.AssignedMaps[file] = inProgress
+	reply.TaskID = m.MapID
+	reply.TaskType = Map
+	reply.Filename = file
+	// since no reduce jobs execute before all
+	// map jobs are done, this is just the number
+	// of reduce jobs passed by the user
+	reply.NReduce = m.ReduceRemain
+	m.MapID++
+}
+
+// assignReduce assigns a worker to work on a reduce task
+// where the chunk name is given by file
+func (m *Master) assignReduce(file string, reply *TaskResponse) {
+	m.AssignedReduce[file] = inProgress
+	reply.TaskID = m.ReduceID
+	reply.TaskType = Reduce
+	reply.Filename = file
+	m.ReduceID++
+}
+
+// checkMapHealth is launched as a go-routine by master
+// to check if the assigned worker is done within 10 seconds
+// of starting a map task
+func (m *Master) checkMapHealth(file string) {
+	time.Sleep(10 * time.Second)
+	if m.AssignedMaps[file] == completed {
+		return
+	}
+	// assume worker is dead; re-assign process
+	m.mapMux.Lock()
+	defer m.mapMux.Unlock()
+	m.AssignedMaps[file] = free
+}
+
+// checkReduceHealth is launched as a go-routine by master
+// to check if the assigned worker is done within 10 seconds
+// of starting a reduce task
+func (m *Master) checkReduceHealth(file string) {
+	time.Sleep(10 * time.Second)
+	if m.AssignedReduce[file] == completed {
+		return
+	}
+	// assume worker is dead; re-assign process
+	m.mapMux.Lock()
+	defer m.mapMux.Unlock()
+	m.AssignedReduce[file] = free
+}
+
+// RequestTask is an RPC via which workers can ask for jobs.
+// It sends back either a Map job, or a Reduce job, or tells the
 // worker to wait if all jobs are currently assigned but not
-// completed. The worker waits in case one of the workers fails.
+// completed. An assigned job may be re-assigned if the worker
+// dies or takes too long.
 func (m *Master) RequestTask(TaskArgs, reply *TaskResponse) error {
 
 	// reduce jobs can only run AFTER all map jobs have finished
-	// once reduce jobs have start, there are no map jobs remaining
+	// once reduce jobs have started, there are no map jobs remaining
 	// so we can safely lock everything here, because they cannot
 	// be used simultaneously
 	m.mapMux.Lock()
@@ -48,52 +102,20 @@ func (m *Master) RequestTask(TaskArgs, reply *TaskResponse) error {
 		// worker
 		for file, status := range m.AssignedMaps {
 			if status == free {
-				m.AssignedMaps[file] = inProgress
-				reply.TaskID = m.MapID
-				reply.TaskType = Map
-				reply.Filename = file
-				// since no reduce jobs execute before all
-				// map jobs are done, this is just the number
-				// of reduce jobs passed by the user
-				reply.NReduce = m.ReduceRemain
-				m.MapID++
-				go func() {
-					time.Sleep(10 * time.Second)
-					if m.AssignedMaps[file] == completed {
-						return
-					}
-					// assume worker is dead; re-assign process
-					m.mapMux.Lock()
-					defer m.mapMux.Unlock()
-					m.AssignedMaps[file] = free
-				}()
-				// assigned task to worker
+				m.assignMap(file, reply)
+				go m.checkMapHealth(file)
 				return nil
 			}
+			// all map tasks currently assigned, but not necessarily completed
 		}
-		// all map tasks currently assigned, but not necessarily completed
 		return ErrWait
 	}
 	// no map tasks remaining, ready to reduce
 	if m.ReduceRemain > 0 {
 		for file, status := range m.AssignedReduce {
 			if status == free {
-				m.AssignedReduce[file] = inProgress
-				reply.TaskID = m.ReduceID
-				reply.TaskType = Reduce
-				reply.Filename = file
-				m.ReduceID++
-				go func() {
-					time.Sleep(10 * time.Second)
-					if m.AssignedReduce[file] == completed {
-						return
-					}
-					// assume worker is dead; re-assign process
-					m.mapMux.Lock()
-					defer m.mapMux.Unlock()
-					m.AssignedReduce[file] = free
-					return
-				}()
+				m.assignReduce(file, reply)
+				go m.checkReduceHealth(file)
 				// assigned task to worker
 				return nil
 			}
@@ -158,11 +180,8 @@ func (m *Master) Done() bool {
 	return ret
 }
 
-//
-// create a Master.
-// main/mrmaster.go calls this function.
-// nReduce is the number of reduce tasks to use.
-//
+// MakeMaster creates a master with a mapper for each
+// input file in files, and nReduce outputs
 func MakeMaster(files []string, nReduce int) *Master {
 	assignedTasks := make(map[string]jobStatus)
 	assignedReduce := make(map[string]jobStatus)

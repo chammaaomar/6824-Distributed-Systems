@@ -52,7 +52,7 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 				doneRes := DoneResponse{}
 				call("Master.NotifyDone", done, &doneRes)
 			}
-		} else if callError != ErrWait {
+		} else if callError == ErrDone {
 			// no tasks available, wait for a sec before asking
 			fmt.Printf("worker calling master: %v\n", callError)
 			fmt.Println("worker: Master not responding. Exiting...")
@@ -65,21 +65,23 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 func handleMap(mapf func(string, string) []KeyValue, file string, nreduce int, taskID int) {
 	contents, err := ioutil.ReadFile(file)
 	if err != nil {
-		fmt.Printf("worker reading: %v", err)
+		fmt.Printf("mapper reading: %v", err)
 		return
 	}
-	// intermediate filename "mr-X-R"
+
 	var iFilename string
 	intermediateFiles := make([]*os.File, nreduce)
+	// json encoder for every intermediate file
 	enc := make([]*json.Encoder, nreduce)
 	kvsEmitted := mapf(file, string(contents))
 
+	// intermediate filename "mr-X-R"
 	for i := range intermediateFiles {
 		iFilename = fmt.Sprintf("mr-worker-%d-%d", taskID, i)
 		intermediateFiles[i], err = os.Create(iFilename)
 		defer intermediateFiles[i].Close()
 		if err != nil {
-			fmt.Printf("worker creating intermediate: %v", err)
+			fmt.Printf("mapper creating intermediate: %v", err)
 			return
 		}
 		enc[i] = json.NewEncoder(intermediateFiles[i])
@@ -89,18 +91,20 @@ func handleMap(mapf func(string, string) []KeyValue, file string, nreduce int, t
 		reducerID := ihash(kv.Key) % nreduce
 		err := enc[reducerID].Encode(&kv)
 		if err != nil {
-			fmt.Printf("worker writing intermediate: %v", err)
+			fmt.Printf("mapper writing intermediate: %v", err)
 			return
 		}
 	}
 
 }
 
-// globPattern is a UNIX-style glob pattern "mr-[0-9]*-JobID"
-// in a realistic MapReduce, such UNIX-style utilities are available
-// because we would be operating in something like HDFS or GFS that
-// provides a Linux abstraction over a distributed filesystem
+// handleReduce reads the intermediate files output by all the mappers
+// with keys whose hash values map to the specific reducer. It starts
+// writing its output to an intermediate file, then atomically renames
+// once it's done.
 func handleReduce(reducef func(string, []string) string, globPattern string) {
+	// find all intermediate files output by mappers with keys
+	// belonging to this specific reducer
 	mapOutputs, err := filepath.Glob(globPattern)
 	lastDash := strings.LastIndex(globPattern, "-")
 	reducerID := globPattern[lastDash+1:]
@@ -113,7 +117,7 @@ func handleReduce(reducef func(string, []string) string, globPattern string) {
 		mapFile, err := os.Open(mapOutput)
 		defer mapFile.Close()
 		if err != nil {
-			fmt.Printf("reading intermediate: %v", err)
+			fmt.Printf("reducer reading intermediate: %v", err)
 			return
 		}
 		decoder := json.NewDecoder(mapFile)
@@ -122,7 +126,7 @@ func handleReduce(reducef func(string, []string) string, globPattern string) {
 			// more objects to parse
 			err := decoder.Decode(&kv)
 			if err != nil {
-				fmt.Printf("decoding: %v", err)
+				fmt.Printf("reducer decoding: %v", err)
 				return
 			}
 			combinedMap[kv.Key] = append(combinedMap[kv.Key], kv.Value)
@@ -132,14 +136,14 @@ func handleReduce(reducef func(string, []string) string, globPattern string) {
 	outName := fmt.Sprintf("mr-out-%s-", reducerID)
 	currentDir, dirErr := os.Getwd()
 	if dirErr != nil {
-		fmt.Printf("worker getting current dir: %v\nb", dirErr)
+		fmt.Printf("reducer getting current dir: %v\nb", dirErr)
 		return
 	}
 	outFile, err := ioutil.TempFile(currentDir, outName)
 	defer outFile.Close()
 
 	if err != nil {
-		fmt.Printf("creating output file: %v", err)
+		fmt.Printf("reducer creating output file: %v", err)
 		return
 	}
 
@@ -151,17 +155,13 @@ func handleReduce(reducef func(string, []string) string, globPattern string) {
 	os.Rename(tempName, permName)
 }
 
-//
-// send an RPC request to the master, wait for the response.
-// usually returns true.
-// returns false if something goes wrong.
-//
+// call sends an RPC request to the master and returns the error
 func call(rpcname string, args interface{}, reply interface{}) error {
 	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
 	sockname := masterSock()
 	c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
-		log.Fatal("dialing:", err)
+		log.Fatal("worker dialing master. Master done. Exiting:", err)
 	}
 	defer c.Close()
 
